@@ -24,8 +24,7 @@ Subpopulation plot overlay functions for all personal dimensions (not here expla
 By saving meta data estimates of position or map elements on a high levels, the simulation eventually allow for more efficient dependet value correction (two agents should not be on the same spot), while at the same time receiving the data for visualising it. The global time point transitions allow fine (basically infinite) temporal segmentation, which reserves the possibility to increase the simulation complexity at some point. I hope for a fast simulation that on the one hand can display the 2d space in realtime, while still generating a bunch of data to connect them later.
 
 # Minimal Model
-<p> A discription of the most basic model to achieve the described <br>
-    project functions. If worst comes worst, only for a single agent. <br>
+A discription of the most basic model to achieve the described project functions. Only a single agent can be modeled for a single agent.
 
 1. Food patches and agents are randomly scattered across the 2D plane.
 
@@ -42,3 +41,5 @@ By saving meta data estimates of position or map elements on a high levels, the 
 4. This preliminary 2D map is then checked for repetition and eventually corrected and accepted.
 
 5. Superimposed on an updated food map (from local signalling of agents that caused changes of it), it gives us a prediction how the map looks like before the process reitterates from point 3.
+
+
