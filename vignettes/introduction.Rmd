@@ -1,0 +1,323 @@
+---
+title: "Introduction"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{introduction}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+```{r setup}
+library(EvoGame)
+```
+# Disclaimer
+
+So far, the package is not actually finished. The provided functions (***evo_game*** and ***base_evo_game***) are mere raw data that should be provided in the future to more advanced applications like graphical images. Despite that, it already follows the basic structure of the future game. I will provide in the following a brief description of the entire process pipeline. This pipeline should be more adjustible in the future and comprise multiple versions of functions per step provided.
+
+
+For now, the function ***evo_game*** functions can be used as solitaire game: Can you reach with your input that the ticks (or time points) are reached without either letting all agents die, which lead to the following message:
+
+```{r}
+#if (nAgent < 1) {print(paste("All agents died already after",t,"ticks :/")); break}
+```
+
+Or over-populating the plane, which lead to this message:
+
+```{r}
+#if (nrow(field)*ncol(field) < nAgent) {print(paste("Too crowded after",t,"ticks :/")); break}
+```
+
+For now, the finishing without either all agents dead or overpopulation is:
+
+```{r}
+#print(paste("Simulation finished after ",t,"ticks :)"))
+```
+
+Increasing the number of *tick* makes this task increasingly harder. For doing so, the ***evo_game*** function is recommended, as it gives more information. ***base_evo_game*** only as a more tidy code setup.
+
+As an example:
+```{r, echo=FALSE}
+#evo_game(rowsField = 4, columnsField = 4, nFood = 5, nAgent = 3, tick = 20, foodGeneratingType = "linear", foodGeneratingFactor = 1)
+```
+In the following, I will give an in-depth reasing behind each function and how the ***evo_game*** functions are set-up.
+
+
+# Idea
+This package creates data that is the result of an evolutionary game of agents that randomly move on a 2 dimensional plane. Each time step a number of status changes and movements are performed. Whereas the functions resemble the process, each step is described in its own function. Therefore, each function causes a standalone effect on the individual agents or the food and allows for individual customiseability.
+
+# Overview
+After mentioning the important objects that are used in the evo_game functions, we are going to go through the overall process step by step and comment the underlying functions that bring about the changes. Each stage is concluded with a segment about the general reasoning about its setup and possible limitations.
+
+The eco_game functions can be disected into approximately three stages:
+
+## 1) Preparation, 2) Status Change, and 3) Move Intent. 
+
+The preparation stage sets up the structures for the game.
+
+During the Status Change phase, the agent a) senses, b) acts, c) its energy level is evaluated, and d) changes in energy level might cause e) changes in its fitness category, which brings about death ("vanishing") or causes the agent to give birth ("reproducing"). 
+
+Between 2) and 3), the time point ("t") changes.
+
+In the Move Intent phase, movements for the new time point are declared and conflicting movements resolved.
+  a) New agents are generated next to those agents that give birth (hold the status "reproducing"), 
+  b) agents attempt move, 
+  c) similarly occupied spaces lead to conflicts that are resolved by forcing younger (later generated agents) to move again. 
+  d) New food is randomly generated.
+
+# Objects
+
+For each time point, there are for both agent and food an index (**agentDetail** and **foodIndex**) that holds information about particular agents and food per position. agentDetails has additional information about "sense", "action", "energy", and "fitness". For food, there is also a matrix with the number of food per coordinate on a matrix (**foodField**). For agentDetail, there is additionally information about the previous time point, which is used by a number of functions (**previousAgentDetail**).
+
+The temporal index information per time point are each time point added to a large list that builds the output file. agentDetail is added to the **wholeAgentDetail** frame that holds the information across all time points, "foodIndex" to **wholeFoodIndex**.
+
+## 1) Preparation
+
+The evo_game functions start out by generating an empty matrix **field** and a indication matrix **indField** that places for each field position an index number, which will be used later in the movement intent stage. First, the function ***generate_field_position*** is used to randomly place the agents and the food on the map.
+
+```{r}
+generate_field_position <- function (field, n, placeHolder, replace) {
+  fieldPosition <- sample(1:length(field), size = n, replace = replace)
+  if (is.numeric(placeHolder)) {
+    fieldPosition <- dplyr::count(data.frame(ind = matrix(c(fieldPosition),ncol = 1)),ind)
+    field[fieldPosition[["ind"]]] <- fieldPosition[["n"]] * placeHolder
+  }
+
+  if (is.logical(placeHolder)) {
+    field[fieldPosition] <- placeHolder
+  }
+  return(field)
+}
+```
+
+For agents, we only aim to receive for each agent a unique position. The output matrix is only TRUE where an agent is placed and *NA* (the unchanged value based on the object **field**). For food however, the function allows more than one food at one place and therefore returns a numeric value, still leaving empty spaces as *NA*. Though not utilised here, in the future, the argument placeholder for the **foodField** could take other values, for example *2*, and generate more food at a certain position.
+
+The other operations in this section are self explanatory and prepare the structure for the following steps.
+
+## 2) Status Change
+
+First, agents are able to a) sense, or perceive. The functions used for this is ***perceive_sense_food***:
+
+```{r, tidy=TRUE}
+perceive_sense_food <- function (agentDetail, nAgent, nFood, foodIndex) {
+  agentDetail["sense"] <- 0
+  if (nFood > 0) {
+    if (length(intersect(foodIndex[["ind"]], agentDetail[["ind"]])) > 0) {
+      senseIndex <- intersect(foodIndex[["ind"]], agentDetail[["ind"]])
+      agentDetail[agentDetail[["ind"]] %in% senseIndex, "sense"] <- 1
+    }
+  }
+  return (agentDetail)
+}
+```
+
+Given that **nFood** is greater than zero, if agents share positions with food, those agents change its sense to 1. In the beginning, sense is reset to 0 from the previous iteration. Though there is no conceptual need for each if statement, the deeper structures are more prone to error messages if zero length arguments are provided.
+
+Secondly, the agent possibly acts on previously sensed food. The function to do this is ***perceive_sense_food***:
+
+```{r, tidy=TRUE}
+act_eat_food <- function(agentDetail, previousAgentDetail, t, foodField, foodIndex, nFood) {
+  agentDetail["action"] <- 0
+  if (t > 0 & nFood > 0) {
+    if (nrow(previousAgentDetail[previousAgentDetail["sense"] == 1 & previousAgentDetail["fitness"] !=
+                                 "vanishing", ]) > 0) {
+      actID <- previousAgentDetail[previousAgentDetail["sense"] == 1 & previousAgentDetail["fitness"] !=
+                                     "vanishing", ]
+      agentDetail[agentDetail[["ID"]] %in% actID[["ID"]], "action"] <- 1
+
+      foodField[agentDetail[agentDetail[["action"]] == 1,"ind"]] <- foodField[agentDetail[
+        agentDetail[["action"]] == 1,"ind"]] - 1
+      foodField[foodField == 0] <- NA
+      foodIndex <- data.frame(n = foodField[!is.na(foodField)], 
+                              data.frame(which(!is.na(foodField), arr.ind = TRUE)), 
+                              ind = which(!is.na(foodField)))
+      nFood <- sum(foodField[!is.na(foodField)])
+    }
+  }
+  return(list(agentDetail = agentDetail, foodField = foodField, foodIndex = foodIndex, nFood = nFood))
+}
+```
+
+Starting from time point 1 (the second itteration), if food is present (**nFood** > 0), the agents that have been sensing food at the previous time point (listed in the data frame **previousAgentDetail**) and did not die previously, are now acting (eating the food). The food field is changed and the positions where the agent ate reduced the food amount by one. Again, acting is reset in the beginning for all agents. It was easier to reduce the **foodField** position than affect the **foodIndex** data frame, since the acting agents indexes could be used on a mere matrix, instead of searching the list. The matrix was then used, like in the beginning, to generate **foodIndex**.
+
+The calculation of the energy distinguishes three categories: standing at the same place, moving, and eating. Each has its respectively affects the energy value.
+
+```{r, tidy=TRUE}
+calculate_energy <- function(agentDetail) {
+  agentDetail[c(agentDetail["row.d"] != 0 | agentDetail["col.d"] != 0), "energy"] <- 
+    agentDetail[c(agentDetail["row.d"] != 0 | agentDetail["col.d"] != 0), "energy"] - 3
+  
+  agentDetail[c(agentDetail["row.d"] == 0 & agentDetail["col.d"] == 0), "energy"] <-
+    agentDetail[c(agentDetail["row.d"] == 0 & agentDetail["col.d"] == 0), "energy"] - 1
+  
+  agentDetail[agentDetail["action"] == 1, "energy"] <- 
+    agentDetail[agentDetail["action"] == 1, "energy"] + 15
+
+  return(agentDetail)
+}
+```
+
+Depending on differences in row compared to the previous time point (differences in rows, **row.d**, and in columns, **col.d**). Here, not moving reduces energy by one, moving by 3, and eating (action) increases energy by 15.
+
+
+The fitness level is then derived from the level of energy.
+
+```{r, tidy=TRUE}
+categorise_fitness <- function(agentDetail) {
+  if (any(agentDetail["energy"] > 45 | agentDetail["energy"] < -15)) {
+    agentDetail["fitness"] <- factor(agentDetail[["fitness"]], 
+                                     levels = c("vanishing", "normal", "reproducing"))
+    agentDetail["fitness"][c(agentDetail["energy"] < -15), ] <- "vanishing"
+    agentDetail["fitness"][c(agentDetail["energy"] >= 
+                               -15 & agentDetail["energy"] < 45), ] <- "normal"
+    agentDetail["fitness"][c(agentDetail["energy"] >= 45), ] <- "reproducing"
+  }
+  return(agentDetail)
+}
+```
+
+This is followed by updating **wholeAgentDetail** and **nAgent** by subtracting the vanishing agents and cutting off the vanishing agents from the agentDetails in ***base_evo_game***, not done in ***evo_game***. These are the last operations in the Status Change stage.
+
+```{r}
+# wholeAgentDetail <- rbind(wholeAgentDetail, agentDetail)
+# nAgent <- nAgent - nrow(agentDetail[agentDetail["fitness"] == "vanishing", ])
+# agentDetail <- agentDetail[agentDetail["fitness"] != "vanishing", ]
+```
+
+The names of the functions are chosen to highlight that sensing and eating food at a time point are suggestions. Equally, other agents could be sensed and actions be mating or fight. The general outline however should remain: sensing is the first status change and action depends on previous perceptions or sensations.
+
+
+## 3) Moving Intent
+
+After increasing t, new food is first generated with **grow_food**.
+
+```{r, tidy=TRUE}
+grow_food <- function(foodGeneratingType, foodGeneratingFactor, field, foodField, nFood) {
+  if (foodGeneratingType == "cumulative") {
+    moreFood <- round(nFood * foodGeneratingFactor)
+  } else if (foodGeneratingType == "linear") {
+    moreFood <- round(foodGeneratingFactor)
+  }
+  foodPosition <- sample(1:length(field), size = moreFood, replace = TRUE)
+  foodPosition <- dplyr::count(data.frame(ind = matrix(c(foodPosition),ncol = 1)),ind)
+  field[] <- 0
+  field[foodPosition[["ind"]]] <- foodPosition[["n"]]
+  foodField[is.na(foodField)] <- 0
+  foodField <- foodField + field
+  foodField[foodField==0] <- NA
+  foodIndex <- data.frame(n = foodField[!is.na(foodField)], data.frame(which(!is.na(foodField),arr.ind = TRUE)),
+                          ind = c(which(!is.na(foodField))))
+  nFood <- nFood + moreFood
+  return(list(foodField = foodField, foodIndex = foodIndex, nFood = nFood))
+}
+```
+
+***grow_food*** takes two types of generating types, specified in the ***evo_game*** functions as **foodGeneratingType** of which the argument *cumulative* grows food based on the food that is already present (and potentially increases strongly if *nAgent* is small and enough *ticks* take place). The other argument is *linear*, which increases the amount of food by a set amount.
+
+Next, new agents are born and randomly placed at one of the eight fields around the parent:
+
+```{r, tidy=TRUE}
+born_agent <- function (agentDetail, wholeAgentDetail, nAgent, t, field, indField) {
+  parentAgent <- agentDetail[agentDetail["fitness"] == "reproducing", ]
+  if (dim(parentAgent)[1] > 0) {
+    parentAgent[, "fitness"] <- "normal"
+    parentAgent["energy"] <- 0
+    childID <- paste0("A", nrow(unique(wholeAgentDetail["ID"])) + 1:nrow(parentAgent))
+    childAgent <- data.frame(t = t, ID = childID, parentAgent[-1:-2])
+
+    for (i in 1:nrow(childAgent)) {
+      moveFieldChild <- matrix(NA, 3, 3)
+      moveFieldChild[c(sample(c(1:4, 6:9), 1))] <- 1  #exclude 5 to avoid similar position as parent agent.
+      childAgent[i, c("row.d", "col.d")] <- which(moveFieldChild == 1, arr.ind = TRUE)
+      childAgent[i, c("row.d", "col.d")] <- childAgent[i, c("row.d", "col.d")] - c(2, 2)
+    }
+    childAgent[, c("row", "col")] <- childAgent[, c("row", "col")] + childAgent[, c("row.d", "col.d")]
+    childAgent[, c("row", "col")] <- cbind((childAgent["row"] - 1)%%nrow(field) + 1, (childAgent["col"] - 1)%%ncol(field) + 1)
+
+    childAgent["ind"] <- as.vector(apply(childAgent[c("row", "col")],1,
+                                         function(x) indField[x[1], x[2]]))
+
+    agentDetail[agentDetail[["ID"]] %in% parentAgent[["ID"]], ] <- parentAgent
+    agentDetail <- rbind(agentDetail, childAgent)
+    nAgent <- nAgent + nrow(childAgent)
+  }
+  return(list(agentDetail = agentDetail, nAgent = nAgent))
+}
+```
+
+The parent agent is reset to energy zero. Here, we first see the process of extending the plane to continue if the agent is placed outside the boundaries of the initial matrix and continues on the opposite site:
+
+```{r}
+#childAgent[, c("row", "col")] <- cbind((childAgent["row"] - 1)%%nrow(field) + 1,
+#                                       (childAgent["col"] - 1)%%ncol(field) + 1)
+```
+
+This process is followed by all agents that are neither giving birth or died moving:
+
+```{r, tidy=TRUE}
+moving_agent <- function (agentDetail, previousAgentDetail, t, field, indField) {
+  normalAgent <- previousAgentDetail[previousAgentDetail["fitness"] == "normal" & previousAgentDetail["sense"]==0,]  # to prevent adjusted parent agents to be selected
+  if (dim(normalAgent)[1] > 0) {
+    normalAgent["t"] <- t
+    for (i in 1:nrow(normalAgent)) {
+      moveField <- matrix(NA, 3, 3)
+      moveField[c(sample(c(1:9), 1))] <- 1
+      normalAgent[i, c("row.d", "col.d")] <- which(moveField == 1, arr.ind = TRUE)
+      normalAgent[i, c("row.d", "col.d")] <- normalAgent[i, c("row.d",
+                                                              "col.d")] - c(2, 2)
+    }
+    normalAgent[, c("row", "col")] <- normalAgent[, c("row", "col")] + normalAgent[, c("row.d", "col.d")]
+    normalAgent[, c("row", "col")] <- cbind((normalAgent["row"] -
+                                               1)%%nrow(field) + 1, (normalAgent["col"] - 1)%%ncol(field) + 1)
+    normalAgent["ind"] <- as.vector(apply(normalAgent[c("row",
+                                                        "col")], 1, function(x) indField[x[1], x[2]]))
+    agentDetail[agentDetail[["ID"]] %in% normalAgent[["ID"]], ] <- normalAgent
+  }
+  return(agentDetail)
+}
+```
+
+Since the agents that gave birth are reset to normal in the born_agent function, the movement function utilises information from the previousAgentDetail object. An agent that is moving has a 1 in 9 chance to remain on the current place.
+
+Lastly, I decided to only allow one agent to occupy a space on the 2 dimensional field and that the younger agent must change the place, which comes with a subtraction of 3 on energy:
+
+```{r, tidy=TRUE}
+distribute_overlaying_agent <- function (agentDetail, previousAgentDetail, field, indField) {
+  if (any(dplyr::count(agentDetail, ind)[2] > 1)) {
+    while (any(dplyr::count(agentDetail, ind)[2] > 1)) {
+      overlayed <- dplyr::count(agentDetail, ind)[dplyr::count(agentDetail, ind)[2] > 1, ]
+      for (i in 1:nrow(overlayed)) {
+        overlayRows <- row(agentDetail)[,1][agentDetail[["ind"]] == overlayed[[1, 1]]][-1]  #removing the agent higher in the list, as allowed to stay
+        toMove <- agentDetail[overlayRows, ]
+        for (j in 1:nrow(toMove)) {
+          moveField <- matrix(NA, 3, 3)
+          moveField[c(sample(c(1:4, 6:9), 1))] <- 1
+          toMove[j, c("row.d", "col.d")] <- which(moveField == 1, arr.ind = TRUE)
+          toMove[j, c("row.d", "col.d")] <- toMove[i, c("row.d", "col.d")] -
+            c(2, 2)
+          toMove[j, c("row", "col")] <- as.vector(toMove[j, c("row", "col")] +
+                                                    toMove[j, c("row.d", "col.d")])
+          toMove[j, c("row", "col")] <- cbind((toMove[j, "row"] - 1) %% nrow(field) +
+                                                1, (toMove[j, "col"] - 1) %% ncol(field) + 1)
+          toMove[j, "ind"] <- indField[toMove[j, "row"], toMove[j, "col"]]
+          toMove[j, "energy"] <- toMove[j, "energy"] - 3
+        }
+        previousAgentDetail[previousAgentDetail[["ID"]] %in% toMove[["ID"]], "sense"] <- 0
+        toMove["energy"] <- toMove["energy"] + 3
+        agentDetail[agentDetail[["ID"]] %in% toMove[["ID"]], ] <- toMove
+      }
+    }
+  }
+  return(agentDetail)
+}
+```
+
+A remaining problem is the small probability that a young agent is surrounded by 8 older agents and not able to move. Though the chances are small, it exist and will be corrected in future versions.
+
+Phase two and three are repeated until t reaches tick. Other possibilities are that all agents vanish (which is no longer interesting) or that too many agents are born, which does not allow each agent to have a position on the field.
